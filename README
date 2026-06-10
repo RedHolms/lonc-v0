@@ -1,1 +1,5 @@
+Bootstrap compiler for the Lon language. Used to compile first version of a real compiler. Outputs
+LLVM IR.
 
+CLI:
+  lonc0 <input source file> <output LLVM IR file>
