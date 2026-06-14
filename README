@@ -2,4 +2,7 @@ Bootstrap compiler for the Lon language. Used to compile first version of a real
 LLVM IR.
 
 CLI:
-  lonc0 <input source file> <output LLVM IR file>
+    lonc0 <input source file> <output LLVM IR file>
+
+For easier translation to the Lon later I'm not using CRT at all, only Win32 function (as right now
+I only target Windows).

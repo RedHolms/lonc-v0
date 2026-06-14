@@ -5,5 +5,4 @@ project(lonc0
   DESCRIPTION "Lon bootstrap compiler (v0)"
   LANGUAGES C)
 
-add_executable(lonc0
-  "src/main.c")
+add_executable(lonc0 "src/main.c")

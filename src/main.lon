@@ -1,20 +1,12 @@
-extern "C" {
-
-[[stdcall]]
 dllimport function GetCommandLineW() -> __cxx_wchar_t mutable*;
 
-[[stdcall]]
 dllimport function CommandLineToArgvW(lpCmdLine: __cxx_wchar_t const*, pNumArgs: int mutable*)
   -> __cxx_wchar_t mutable* mutable*;
 
-[[stdcall]]
 dllimport function GetStdHandle(nStdHandle: uint) -> pointer;
 
-[[stdcall]]
 dllimport function WriteConsoleA(hConsoleOutput: pointer, lpBuffer: __ascii_char const*,
   nNumberOfCharsToWrite: uint, lpNumberOfCharsWritten: uint mutable*, lpReserved: pointer) -> uint;
-
-} // extern "C"
 
 function strlen(str: __ascii_char const*) -> ulong {
   let result: ulong = 0;
@@ -37,7 +29,7 @@ function main() -> int {
   let argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 
   if (argc != 3) {
-    print_err(__asciiz_str__("# failed to open the input file\n"));
+    print_err("# failed to open the input file\n");
     return 1;
   }
 
