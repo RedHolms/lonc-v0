@@ -1,3 +1,12 @@
+/** Lon programming language bootstrap (v0) compiler written in C.
+ * Made by RedHolms ( http://redholms.dev ) in Jun-Jul 2026.
+ *
+ * This code implements bare minimum lexer, parser and LLVM-IR gen. At this
+ * stage language looks more like naked version of C with stupid syntax.
+ * This code uses only Win32 API without any crt function for easier porting to
+ * the Lon later.
+ */
+
 #include <Windows.h>
 #include <stdint.h>
 
@@ -18,7 +27,9 @@ typedef enum _E_TokenKind {
   T_LT = '<',
   T_EXC = '!',
 
-  T_INC = 256,          /* '++' */
+  _T_LAST_CHAR_TOKEN = 255,
+
+  T_INC,                /* '++' */
   T_DEC,                /* '--' */
   T_ARROW,              /* '->' */
   T_EQ,                 /* '==' */
@@ -32,54 +43,227 @@ typedef enum _E_TokenKind {
   T_INT,
 
   /* keywords */
-  T_DLLIMPORT,
-  T_FUNCTION,
-  T_MUTABLE,
-  T_CONST,
-  T_LET,
-  T_WHILE,
-  T_RETURN,
-  T_NULLPTR,
-  T_IF,
-  T_ELSE,
+  KW_DLLIMPORT,
+  KW_FUNCTION,
+  KW_MUTABLE,
+  KW_CONST,
+  KW_LET,
+  KW_WHILE,
+  KW_RETURN,
+  KW_NULLPTR,
+  KW_IF,
+  KW_ELSE,
+  KW___CXX_WCHAR_T,
+  KW___ASCII_CHAR,
+  KW_INT,
+  KW_UINT,
+  KW_ULONG,
+  KW_POINTER,
 
-  /* built-in types */
-  T_TP___CXX_WCHAR_T,
-  T_TP___ASCII_CHAR,
-  T_TP_INT,
-  T_TP_UINT,
-  T_TP_POINTER
+  /* pseudo token (specials) */
+  T_ERR,
+  T_EOF
 } TokenKind;
 
 typedef struct _S_Token {
   TokenKind kind;
   char *s;
   int64_t n;
-  struct _S_Token* next;
+  int tline, tcol;
+  struct _S_Token* next; /* we keep all tokens in a linked list (for garbage
+   collection maybe?) */
 } Token;
 
 enum _E_EOLFormat {
+  /* 0 = undefined */
   LF = 1,
   CRLF,
   CR
 };
 
+enum _E_ASTNodeType {
+  AST_TYPE,
+  AST_FUNC_ARG,
+
+  AST_MODULE,
+
+  AST_FUNC_DECL,
+  AST_FUNC_DEF,
+  AST_VAR_DECL,
+
+  /* statements */
+  AST_WHILE,
+  AST_IF,
+  AST_RETURN,
+
+  /* expressions */
+  AST_VAR,
+  AST_INT_LIT,
+  AST_STR_LIT,
+  AST_UNARY_OP,
+  AST_BINARY_OP,
+  AST_CALL,
+  AST_NULLPTR
+};
+
+#define AST_NODE_SHARED_FIELDS                                                 \
+  int tp; /* type of the node (_E_ASTNodeType) */                              \
+  struct _S_ASTNode* next /* next node in a linked list (if applicable) */
+
+typedef struct _S_ASTNode {
+  AST_NODE_SHARED_FIELDS;
+  /* content is determined by the type */
+} ASTNode;
+
+enum _E_TypeKind {
+  TK_BUILTIN,
+  TK_POINTER
+};
+
+enum _E_BuiltinTypes {
+  BIT_VOID,
+  BIT___CXX_WCHAR_T,
+  BIT___ASCII_CHAR,
+  BIT_INT,
+  BIT_UINT,
+  BIT_ULONG,
+  BIT_POINTER
+};
+
+typedef struct _S_ASTNode_Type {
+  AST_NODE_SHARED_FIELDS;
+  int tp_kind;
+  union {
+    struct {
+      int tp;
+    } builtin;
+    struct {
+      int is_const;
+      struct _S_ASTNode_Type *underlying;
+    } ptr;
+  };
+} ASTNode_Type;
+
+typedef struct _S_ASTNode_FuncArg {
+  AST_NODE_SHARED_FIELDS;
+  char *name;
+  ASTNode_Type *var_tp;
+} ASTNode_FuncArg;
+
+typedef struct _S_ASTNode_Module {
+  AST_NODE_SHARED_FIELDS;
+  char *file;
+  ASTNode *decls_ll;
+} ASTNode_Module;
+
+typedef struct _S_ASTNode_FuncDecl {
+  AST_NODE_SHARED_FIELDS;
+  char is_dllimport;
+  char *name;
+  ASTNode_Type *ret_tp;
+  ASTNode_FuncArg *args_ll;
+} ASTNode_FuncDecl;
+
+typedef struct _S_ASTNode_FuncDef {
+  AST_NODE_SHARED_FIELDS;
+  char *name;
+  ASTNode_Type *ret_tp;
+  ASTNode_FuncArg *args_ll;
+  ASTNode *body_ll;
+} ASTNode_FuncDef;
+
+typedef struct _S_ASTNode_VarDecl {
+  AST_NODE_SHARED_FIELDS;
+  char *name;
+  ASTNode_Type *var_tp;
+  ASTNode *init_expr;
+} ASTNode_VarDecl;
+
+typedef struct _S_ASTNode_While {
+  AST_NODE_SHARED_FIELDS;
+  ASTNode *cond_expr;
+  ASTNode *body_ll;
+} ASTNode_While;
+
+typedef struct _S_ASTNode_If {
+  AST_NODE_SHARED_FIELDS;
+  ASTNode *cond_expr;
+  ASTNode *body_ll;
+} ASTNode_If;
+
+typedef struct _S_ASTNode_Return {
+  AST_NODE_SHARED_FIELDS;
+  ASTNode *retval_expr;
+} ASTNode_Return;
+
+typedef struct _S_ASTNode_Var {
+  AST_NODE_SHARED_FIELDS;
+  char *name;
+} ASTNode_Var;
+
+typedef struct _S_ASTNode_IntLit {
+  AST_NODE_SHARED_FIELDS;
+  int64_t n;
+} ASTNode_IntLit;
+
+typedef struct _S_ASTNode_StrLit {
+  AST_NODE_SHARED_FIELDS;
+  char *s;
+} ASTNode_StrLit;
+
+enum _E_UnaryOp {
+  UOP_DEREF,
+  UOP_ADDROF,
+  UOP_PLUS,
+  UOP_MINUS,
+  UOP_NOT,
+  UOP_INC,
+  UOP_DEC
+};
+
+typedef struct _S_ASTNode_UnaryOp {
+  AST_NODE_SHARED_FIELDS;
+  char is_pre;
+  int op;
+  ASTNode *expr;
+} ASTNode_UnaryOp;
+
+enum _E_BinaryOp {
+  BOP_NEQ
+};
+
+typedef struct _S_ASTNode_BinaryOp {
+  AST_NODE_SHARED_FIELDS;
+  int op;
+  ASTNode *lhs, *rhs;
+} ASTNode_BinaryOp;
+
+typedef struct _S_ASTNode_Call {
+  AST_NODE_SHARED_FIELDS;
+  const char *name;
+  ASTNode *args_ll;
+} ASTNode_Call;
+
+typedef struct _S_ASTNode_Nullptr {
+  AST_NODE_SHARED_FIELDS;
+} ASTNode_Nullptr;
+
 char *source_begin = NULL, *src = NULL;
-int line = 1, col = 1;
+int line = 1, col = 1, lex_start_line, lex_start_col;
 int eolf = 0;
 Token *first_tk = NULL, *last_tk = NULL;
+Token *cur_tk = NULL;
+ASTNode *ast_root = NULL;
 
-inline const char* eolf_as_str() {
-  switch (eolf) {
-  default:
-    return "undefined";
-  case LF:
-    return "LF";
-  case CRLF:
-    return "CRLF";
-  case CR:
-    return "CR";
-  }
+/* crt-replacement functions. all of them have original names but with 'my_'
+prefix */
+
+inline void *my_malloc(size_t n) {
+  return HeapAlloc(GetProcessHeap(), 0, n);
+}
+
+inline void my_free(void *block) {
+  HeapFree(GetProcessHeap(), 0, block);
 }
 
 size_t my_strlen(const char *str) {
@@ -109,13 +293,19 @@ int my_strcmp(const char *a, const char *b) {
   return a[i] ? 1 : -1;
 }
 
-inline void *my_malloc(size_t n) {
-  return HeapAlloc(GetProcessHeap(), 0, n);
+void my_strcpy(char *dest, const char *src_str) {
+  while ((*dest++ = *src_str++));
 }
 
-inline void my_free(void *block) {
-  HeapFree(GetProcessHeap(), 0, block);
+char *my_strdup(const char *s) {
+  char *r;
+
+  r = my_malloc(my_strlen(s) + 1);
+  my_strcpy(r, s);
+  return r;
 }
+
+/* console output functions */
 
 void print(const char *msg) {
   HANDLE con;
@@ -126,6 +316,7 @@ void print(const char *msg) {
 }
 
 void print_int(int val) {
+  /* TODO: handle signed numbers */
   char buf[64];
   char *bp = buf + sizeof(buf) - 1;
 
@@ -167,21 +358,22 @@ void print_tok(Token *tk) {
   case T_ID: print("T_ID "); fl=1; break;
   case T_STR: print("T_STR "); fl=1; break;
   case T_INT: print("T_INT "); fl=2; break;
-  case T_DLLIMPORT: print("T_DLLIMPORT "); fl=1; break;
-  case T_FUNCTION: print("T_FUNCTION "); fl=1; break;
-  case T_MUTABLE: print("T_MUTABLE "); fl=1; break;
-  case T_CONST: print("T_CONST "); fl=1; break;
-  case T_LET: print("T_LET "); fl=1; break;
-  case T_WHILE: print("T_WHILE "); fl=1; break;
-  case T_RETURN: print("T_RETURN "); fl=1; break;
-  case T_NULLPTR: print("T_NULLPTR "); fl=1; break;
-  case T_IF: print("T_IF "); fl=1; break;
-  case T_ELSE: print("T_ELSE "); fl=1; break;
-  case T_TP___CXX_WCHAR_T: print("T_TP___CXX_WCHAR_T "); fl=1; break;
-  case T_TP___ASCII_CHAR: print("T_TP___ASCII_CHAR "); fl=1; break;
-  case T_TP_INT: print("T_TP_INT "); fl=1; break;
-  case T_TP_UINT: print("T_TP_UINT "); fl=1; break;
-  case T_TP_POINTER: print("T_TP_POINTER "); fl=1; break;
+  case KW_DLLIMPORT: print("KW_DLLIMPORT "); fl=1; break;
+  case KW_FUNCTION: print("KW_FUNCTION "); fl=1; break;
+  case KW_MUTABLE: print("KW_MUTABLE "); fl=1; break;
+  case KW_CONST: print("KW_CONST "); fl=1; break;
+  case KW_LET: print("KW_LET "); fl=1; break;
+  case KW_WHILE: print("KW_WHILE "); fl=1; break;
+  case KW_RETURN: print("KW_RETURN "); fl=1; break;
+  case KW_NULLPTR: print("KW_NULLPTR "); fl=1; break;
+  case KW_IF: print("KW_IF "); fl=1; break;
+  case KW_ELSE: print("KW_ELSE "); fl=1; break;
+  case KW___CXX_WCHAR_T: print("KW___CXX_WCHAR_T "); fl=1; break;
+  case KW___ASCII_CHAR: print("KW___ASCII_CHAR "); fl=1; break;
+  case KW_INT: print("KW_INT "); fl=1; break;
+  case KW_UINT: print("KW_UINT "); fl=1; break;
+  case KW_ULONG: print("KW_ULONG "); fl=1; break;
+  case KW_POINTER: print("KW_POINTER "); fl=1; break;
   default:
     print_int(tk->kind);
     print(" ");
@@ -205,7 +397,7 @@ void invalid_eol() {
   ExitProcess(1);
 }
 
-Token* tok(TokenKind k) {
+Token *mktok(TokenKind k) {
   Token *tk = my_malloc(sizeof(Token));
 
   if (last_tk)
@@ -217,6 +409,8 @@ Token* tok(TokenKind k) {
   tk->s = NULL;
   tk->n = 0;
   tk->next = NULL;
+  tk->tline = lex_start_line;
+  tk->tcol = lex_start_col;
   return last_tk = tk;
 }
 
@@ -250,38 +444,40 @@ inline int is_digit(char ch) {
 void process_kws(Token *tk) {
   /* do the stupid way */
   if (my_strcmp(tk->s, "dllimport") == 0)
-    tk->kind = T_DLLIMPORT;
+    tk->kind = KW_DLLIMPORT;
   else if (my_strcmp(tk->s, "function") == 0)
-    tk->kind = T_FUNCTION;
+    tk->kind = KW_FUNCTION;
   else if (my_strcmp(tk->s, "mutable") == 0)
-    tk->kind = T_MUTABLE;
+    tk->kind = KW_MUTABLE;
   else if (my_strcmp(tk->s, "const") == 0)
-    tk->kind = T_CONST;
+    tk->kind = KW_CONST;
   else if (my_strcmp(tk->s, "let") == 0)
-    tk->kind = T_LET;
+    tk->kind = KW_LET;
   else if (my_strcmp(tk->s, "while") == 0)
-    tk->kind = T_WHILE;
+    tk->kind = KW_WHILE;
   else if (my_strcmp(tk->s, "return") == 0)
-    tk->kind = T_RETURN;
+    tk->kind = KW_RETURN;
   else if (my_strcmp(tk->s, "nullptr") == 0)
-    tk->kind = T_NULLPTR;
+    tk->kind = KW_NULLPTR;
   else if (my_strcmp(tk->s, "if") == 0)
-    tk->kind = T_IF;
+    tk->kind = KW_IF;
   else if (my_strcmp(tk->s, "else") == 0)
-    tk->kind = T_ELSE;
+    tk->kind = KW_ELSE;
   else if (my_strcmp(tk->s, "__cxx_wchar_t") == 0)
-    tk->kind = T_TP___CXX_WCHAR_T;
+    tk->kind = KW___CXX_WCHAR_T;
   else if (my_strcmp(tk->s, "__ascii_char") == 0)
-    tk->kind = T_TP___ASCII_CHAR;
+    tk->kind = KW___ASCII_CHAR;
   else if (my_strcmp(tk->s, "int") == 0)
-    tk->kind = T_TP_INT;
+    tk->kind = KW_INT;
   else if (my_strcmp(tk->s, "uint") == 0)
-    tk->kind = T_TP_UINT;
+    tk->kind = KW_UINT;
+  else if (my_strcmp(tk->s, "ulong") == 0)
+    tk->kind = KW_ULONG;
   else if (my_strcmp(tk->s, "pointer") == 0)
-    tk->kind = T_TP_POINTER;
+    tk->kind = KW_POINTER;
 }
 
-void lex_error(const char *err) {
+Token *lex_error(const char *err) {
   print("# lexer error at ");
   print_int(line);
   print(":");
@@ -290,12 +486,17 @@ void lex_error(const char *err) {
   print("# ");
   print(err);
   print("\n");
+  return mktok(T_ERR);
 }
 
+/* consume next token from the text */
 Token* lex() {
 lex_begin:
+  lex_start_line = line;
+  lex_start_col = col;
+
   if (*src == 0)
-    return NULL;
+    return mktok(T_EOF);
 
   switch (*src) {
   case ' ':
@@ -363,22 +564,22 @@ lex_begin:
   case ',':
   one_char_tok:
     ++col;
-    return tok(*src++);
+    return mktok(*src++);
 
   case '+':
     if (*(src+1) == '+') {
       src += 2; col += 2;
-      return tok(T_INC);
+      return mktok(T_INC);
     }
     goto one_char_tok;
   case '-':
     if (*(src+1) == '-') {
       src += 2; col += 2;
-      return tok(T_DEC);
+      return mktok(T_DEC);
     }
     if (*(src+1) == '>') {
       src += 2; col += 2;
-      return tok(T_ARROW);
+      return mktok(T_ARROW);
     }
 
     /* parse negative ints */
@@ -393,30 +594,30 @@ lex_begin:
   case '=':
     if (*(src+1) == '=') {
       src += 2; col += 2;
-      return tok(T_EQ);
+      return mktok(T_EQ);
     }
     goto one_char_tok;
   case '!':
     if (*(src+1) == '=') {
       src += 2; col += 2;
-      return tok(T_NE);
+      return mktok(T_NE);
     }
     goto one_char_tok;
   case '>':
     if (*(src+1) == '=') {
       src += 2; col += 2;
-      return tok(T_GE);
+      return mktok(T_GE);
     }
     goto one_char_tok;
   case '<':
     if (*(src+1) == '=') {
       src += 2; col += 2;
-      return tok(T_LE);
+      return mktok(T_LE);
     }
     goto one_char_tok;
 
-    /* ID (or keyword). Must begin with ASCII char or underscore. Other chars
-     * can be digits (see is_id_char) */
+  /* ID (or keyword). Must begin with a letter or an underscore. Other chars can
+   * be digits (see is_id_char) */
   case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G':
   case 'H': case 'I': case 'J': case 'K': case 'L': case 'M': case 'N':
   case 'O': case 'P': case 'Q': case 'R': case 'S': case 'T': case 'U':
@@ -433,7 +634,7 @@ lex_begin:
       ++src; ++col;
     }
 
-    Token *tk = tok(T_ID);
+    Token *tk = mktok(T_ID);
 
     size_t len = src - start;
     tk->s = my_malloc(len+1);
@@ -448,7 +649,7 @@ lex_begin:
 
   case '0': case '1': case '2': case '3': case '4': case '5': case '6':
   case '7': case '8': case '9': {
-    Token *tk = tok(T_INT);
+    Token *tk = mktok(T_INT);
 
     tk->n = 0;
     while (is_digit(*src)) {
@@ -463,19 +664,17 @@ lex_begin:
   case '"': {
     ++src; ++col;
 
-    Token *tk = tok(T_STR);
+    Token *tk = mktok(T_STR);
     size_t len = 0;
 
     for (char *p = src;;) {
       switch (*p) {
       case 0:
-        lex_error("unexpected end of file inside a string");
-        return NULL;
+        return lex_error("unexpected end of file inside a string");
 
       case '\n':
       case '\r':
-        lex_error("unexpected end of line inside a string");
-        return NULL;
+        return lex_error("unexpected end of line inside a string");
 
       case '\\': /* escape sequence. don't check it right now */
         /* consume 2 chars, but count only 1 */
@@ -509,8 +708,7 @@ lex_begin:
         case 'n': ch = '\n'; break;
         case 't': ch = '\t'; break;
         default:
-          lex_error("invalid escape sequence");
-          return NULL;
+          return lex_error("invalid escape sequence");
         }
 
         tk->s[i] = ch;
@@ -522,16 +720,622 @@ lex_begin:
       tk->s[i++] = *src++; ++col;
     }
 
-    /* skip the ending '"' */
+    /* skip the ending quote */
     ++src; ++col;
 
     return tk;
   }
 
   default:
-    lex_error("unexpected characters");
-    return NULL;
+    return lex_error("unexpected characters");
   }
+}
+
+inline Token *lpeek() {
+  if (cur_tk)
+    return cur_tk;
+
+  return cur_tk = lex();
+}
+
+/* get the next token */
+inline Token *ladvance() {
+  if (cur_tk) {
+    Token *tk = cur_tk;
+    cur_tk = NULL;
+    return tk;
+  }
+
+  return lex();
+}
+
+// ASTNode *mkastnode(ASTKind kind) {
+//   ASTNode *n = my_malloc(sizeof(ASTNode));
+//   n->kind = kind;
+//   return n;
+// }
+//
+// // Translates language high-level types directly into LLVM textual structures
+// char* parse_type() {
+//   char base[128] = {0};
+//   if (cur_tok->kind == T_TP___CXX_WCHAR_T) my_strcpy(base, "i16");
+//   else if (cur_tok->kind == T_TP___ASCII_CHAR) my_strcpy(base, "i8");
+//   else if (cur_tok->kind == T_TP_INT || cur_tok->kind == T_TP_UINT) my_strcpy(base, "i32");
+//   else if (cur_tok->kind == T_TP_ULONG) my_strcpy(base, "i64");
+//   else if (cur_tok->kind == T_TP_POINTER) my_strcpy(base, "i8*");
+//   else my_strcpy(base, "void");
+//   advance();
+//
+//   while (cur_tok && (cur_tok->kind == T_MUTABLE || cur_tok->kind == T_CONST || cur_tok->kind == '*')) {
+//     if (cur_tok->kind == '*') {
+//       size_t len = my_strlen(base);
+//       base[len] = '*'; base[len+1] = 0;
+//     }
+//     advance();
+//   }
+//   char *res = my_malloc(my_strlen(base) + 1);
+//   my_strcpy(res, base);
+//   return res;
+// }
+//
+// // ============================================================================
+// // 5. PARSER ARCHITECTURE (Recursive Descent)
+// // ============================================================================
+//
+// ASTNode* parse_expr();
+//
+// ASTNode* parse_primary() {
+//   if (cur_tok->kind == T_INT) {
+//     ASTNode *n = mkastnode(AST_INT);
+//     n->int_val = cur_tok->n;
+//     n->type_str = "i32";
+//     advance();
+//     return n;
+//   }
+//   if (cur_tok->kind == T_NULLPTR) {
+//     ASTNode *n = mkastnode(AST_INT);
+//     n->int_val = 0;
+//     n->type_str = "i8*";
+//     advance();
+//     return n;
+//   }
+//   if (cur_tok->kind == T_STR) {
+//     ASTNode *n = mkastnode(AST_STR);
+//     n->name = cur_tok->s;
+//     n->type_str = "i8*";
+//     advance();
+//     return n;
+//   }
+//   if (cur_tok->kind == T_ID) {
+//     char *id_name = cur_tok->s;
+//     advance();
+//     if (cur_tok->kind == '(') { // Call expression
+//       advance();
+//       ASTNode *n = mkastnode(AST_CALL);
+//       n->name = id_name;
+//       ASTNode *tail = NULL;
+//       if (cur_tok->kind != ')') {
+//         while (1) {
+//           ASTNode *arg = parse_expr();
+//           if (!n->args) n->args = arg;
+//           else tail->next = arg;
+//           tail = arg;
+//           if (cur_tok->kind == ')') break;
+//           if (cur_tok->kind == ',') advance();
+//         }
+//       }
+//       advance(); // consume ')'
+//       return n;
+//     }
+//     ASTNode *n = mkastnode(AST_ID);
+//     n->name = id_name;
+//     return n;
+//   }
+//   if (cur_tok->kind == '(') {
+//     advance();
+//     ASTNode *n = parse_expr();
+//     advance(); // consume ')'
+//     return n;
+//   }
+//   return NULL;
+// }
+//
+// ASTNode* parse_unary() {
+//   if (cur_tok->kind == '*' || cur_tok->kind == '&' || cur_tok->kind == T_INC || cur_tok->kind == T_DEC) {
+//     ASTNode *n = mkastnode(AST_UNARY);
+//     n->int_val = cur_tok->kind; // Save operator token ID
+//     advance();
+//     n->lhs = parse_unary();
+//     return n;
+//   }
+//   return parse_primary();
+// }
+//
+// ASTNode* parse_expr() {
+//   ASTNode *lhs = parse_unary();
+//   if (!lhs) return NULL;
+//
+//   if (cur_tok->kind == '=' || cur_tok->kind == '+' || cur_tok->kind == '-' ||
+//       cur_tok->kind == T_NE || cur_tok->kind == T_EQ || cur_tok->kind == '<' || cur_tok->kind == '>') {
+//     ASTNode *n = mkastnode(cur_tok->kind == '=' ? AST_ASSIGN : AST_BINARY);
+//     n->int_val = cur_tok->kind;
+//     advance();
+//     n->lhs = lhs;
+//     n->rhs = parse_expr();
+//     return n;
+//   }
+//   return lhs;
+// }
+//
+// ASTNode* parse_stmt() {
+//   if (cur_tok->kind == T_LET) {
+//     advance();
+//     ASTNode *n = mkastnode(AST_VAR_DECL);
+//     n->name = cur_tok->s;
+//     advance();
+//     if (cur_tok->kind == ':') { advance(); n->type_str = parse_type(); }
+//     if (cur_tok->kind == '=') { advance(); n->lhs = parse_expr(); }
+//     advance(); // consume ';'
+//     return n;
+//   }
+//   if (cur_tok->kind == T_RETURN) {
+//     advance();
+//     ASTNode *n = mkastnode(AST_RETURN);
+//     if (cur_tok->kind != ';') n->lhs = parse_expr();
+//     advance(); // consume ';'
+//     return n;
+//   }
+//   if (cur_tok->kind == T_WHILE) {
+//     advance(); advance(); // consume while and '('
+//     ASTNode *n = mkastnode(AST_WHILE);
+//     n->lhs = parse_expr();
+//     advance(); // consume ')'
+//     if (cur_tok->kind == '{') {
+//       advance();
+//       ASTNode *body = mkastnode(AST_BLOCK);
+//       ASTNode *tail = NULL;
+//       while (cur_tok && cur_tok->kind != '}') {
+//         ASTNode *s = parse_stmt();
+//         if (!body->children) body->children = s;
+//         else tail->next = s;
+//         tail = s;
+//       }
+//       advance(); // consume '}'
+//       n->rhs = body;
+//     }
+//     return n;
+//   }
+//   if (cur_tok->kind == T_IF) {
+//     advance(); advance(); // consume if and '('
+//     ASTNode *n = mkastnode(AST_IF);
+//     n->lhs = parse_expr();
+//     advance(); // consume ')'
+//     if (cur_tok->kind == '{') {
+//       advance();
+//       ASTNode *body = mkastnode(AST_BLOCK);
+//       ASTNode *tail = NULL;
+//       while (cur_tok && cur_tok->kind != '}') {
+//         ASTNode *s = parse_stmt();
+//         if (!body->children) body->children = s;
+//         else tail->next = s;
+//         tail = s;
+//       }
+//       advance(); // consume '}'
+//       n->rhs = body;
+//     }
+//     return n;
+//   }
+//   // Standard standalone expression statement fallback
+//   ASTNode *e = parse_expr();
+//   if (cur_tok->kind == ';') advance();
+//   return e;
+// }
+//
+// ASTNode* parse_program() {
+//   ASTNode *root = mkastnode(AST_PROGRAM);
+//   ASTNode *tail = NULL;
+//
+//   while (cur_tok) {
+//     int is_dll = 0;
+//     if (cur_tok->kind == T_DLLIMPORT) { is_dll = 1; advance(); }
+//     if (cur_tok->kind == T_FUNCTION) {
+//       advance();
+//       ASTNode *fn = mkastnode(AST_FUNCTION);
+//       fn->is_dllimport = is_dll;
+//       fn->name = cur_tok->s;
+//       advance(); advance(); // consume name and '('
+//
+//       // Map parameters cleanly
+//       ASTNode *arg_tail = NULL;
+//       while (cur_tok && cur_tok->kind != ')') {
+//         ASTNode *p = mkastnode(AST_VAR_DECL);
+//         p->name = cur_tok->s;
+//         advance(); advance(); // consume identifier and ':'
+//         p->type_str = parse_type();
+//         if (!fn->args) fn->args = p;
+//         else arg_tail->next = p;
+//         arg_tail = p;
+//         if (cur_tok->kind == ',') advance();
+//       }
+//       advance(); // consume ')'
+//
+//       if (cur_tok->kind == T_ARROW) { advance(); fn->type_str = parse_type(); }
+//       else { fn->type_str = "void"; }
+//
+//       if (cur_tok->kind == ';') { // Prototype declaration only
+//         advance();
+//       } else if (cur_tok->kind == '{') { // Full Function Body definition
+//         advance();
+//         ASTNode *body = mkastnode(AST_BLOCK);
+//         ASTNode *stmt_tail = NULL;
+//         while (cur_tok && cur_tok->kind != '}') {
+//           ASTNode *s = parse_stmt();
+//           if (!body->children) body->children = s;
+//           else stmt_tail->next = s;
+//           stmt_tail = s;
+//         }
+//         advance(); // consume '}'
+//         fn->rhs = body;
+//       }
+//       if (!root->children) root->children = fn;
+//       else tail->next = fn;
+//       tail = fn;
+//     } else {
+//       advance();
+//     }
+//   }
+//   return root;
+// }
+
+inline void *mk_ast_node(int tp) {
+  ASTNode *node;
+  size_t size;
+
+  switch (tp) {
+  case AST_TYPE: size = sizeof(ASTNode_Type); break;
+  case AST_FUNC_ARG: size = sizeof(ASTNode_FuncArg); break;
+  case AST_MODULE: size = sizeof(ASTNode_Module); break;
+  case AST_FUNC_DECL: size = sizeof(ASTNode_FuncDecl); break;
+  case AST_FUNC_DEF: size = sizeof(ASTNode_FuncDef); break;
+  case AST_VAR_DECL: size = sizeof(ASTNode_VarDecl); break;
+  case AST_WHILE: size = sizeof(ASTNode_While); break;
+  case AST_IF: size = sizeof(ASTNode_If); break;
+  case AST_RETURN: size = sizeof(ASTNode_Return); break;
+  case AST_VAR: size = sizeof(ASTNode_Var); break;
+  case AST_INT_LIT: size = sizeof(ASTNode_IntLit); break;
+  case AST_STR_LIT: size = sizeof(ASTNode_StrLit); break;
+  case AST_UNARY_OP: size = sizeof(ASTNode_UnaryOp); break;
+  case AST_BINARY_OP: size = sizeof(ASTNode_BinaryOp); break;
+  case AST_CALL: size = sizeof(ASTNode_Call); break;
+  case AST_NULLPTR: size = sizeof(ASTNode_Nullptr); break;
+  }
+  node = my_malloc(size);
+  for (size_t i = 0; i < size; ++i) /* fill with zeroes */
+    ((char*)node)[i] = 0;
+  node->tp = tp;
+  return node;
+}
+
+inline ASTNode_Type *mk_void_tp() {
+  ASTNode_Type *node = mk_ast_node(AST_TYPE);
+  node->tp_kind = TK_BUILTIN;
+  node->builtin.tp = BIT_VOID;
+  return node;
+}
+
+inline void ast_ll_insert(ASTNode **ll_first, ASTNode *el) {
+  if (*ll_first == NULL) {
+    *ll_first = el;
+  }
+  else {
+    ASTNode *last = *ll_first;
+    while (last->next)
+      last = last->next;
+    last->next = el;
+  }
+}
+
+enum _E_Modifiers {
+  HAS_DLLIMPORT = 0x1
+};
+
+void parse_error_at_tk(const char *err, Token* tk) {
+  print("# parser error at ");
+  print_int(tk->tline);
+  print(":");
+  print_int(tk->tcol);
+  print("\n# ");
+  print(err);
+  print("\n");
+  ExitProcess(1);
+}
+
+void parse_error(const char *err) {
+  parse_error_at_tk(err, lpeek());
+}
+
+/* type parsing. parses leaf types */
+ASTNode_Type *parse_type1() {
+  int bit_tp;
+
+  switch (lpeek()->kind) {
+  case KW___CXX_WCHAR_T:
+    bit_tp = BIT___CXX_WCHAR_T; break;
+  case KW___ASCII_CHAR:
+    bit_tp = BIT___ASCII_CHAR; break;
+  case KW_INT:
+    bit_tp = BIT_INT; break;
+  case KW_UINT:
+    bit_tp = BIT_UINT; break;
+  case KW_ULONG:
+    bit_tp = BIT_ULONG; break;
+  case KW_POINTER:
+    bit_tp = BIT_POINTER; break;
+  default:
+    parse_error("invalid type");
+  }
+
+  ladvance();
+  ASTNode_Type *res = mk_ast_node(AST_TYPE);
+  res->tp_kind = TK_BUILTIN;
+  res->builtin.tp = bit_tp;
+  return res;
+}
+
+/* parses complex types (pointers, etc.). returns NULL if type is complete */
+ASTNode_Type *parse_type2(ASTNode_Type *underlying) {
+  if (lpeek()->kind == KW_MUTABLE || lpeek()->kind == KW_CONST) {
+    char is_const = lpeek()->kind == KW_CONST;
+
+    ladvance();
+    if (lpeek()->kind != T_STAR)
+      parse_error("'*' expected for a pointer type");
+    ladvance();
+
+    ASTNode_Type *ptr_tp = mk_ast_node(AST_TYPE);
+    ptr_tp->tp_kind = TK_POINTER;
+    ptr_tp->ptr.is_const = is_const;
+    ptr_tp->ptr.underlying = underlying;
+    return ptr_tp;
+  }
+
+  return NULL;
+}
+
+/* type parsing. uses 'parse_type1' for leaf types parsing, then checks for
+ pointers and other */
+ASTNode_Type *parse_type() {
+  ASTNode_Type *res;
+
+  res = parse_type1();
+  while (1) {
+    ASTNode_Type *next = parse_type2(res);
+    if (!next)
+      return res;
+    res = next;
+  }
+}
+
+ASTNode *parse_expression() {
+  if (lpeek()->kind == T_INT) {
+    ASTNode_IntLit *res = mk_ast_node(AST_INT_LIT);
+    res->n = ladvance()->n;
+    return (ASTNode*)res;
+  }
+
+  /* PRATT PARSING HERE */
+}
+
+/* current lex token must be KW_LET */
+ASTNode *parse_let() {
+  ASTNode_VarDecl *res;
+
+  ladvance();
+
+  if (lpeek()->kind != T_ID)
+    parse_error("expected variable name");
+
+  res = mk_ast_node(AST_VAR_DECL);
+  res->name = my_strdup(ladvance()->s);
+
+  if (lpeek()->kind != T_COLON)
+    parse_error("expected colon");
+  ladvance();
+
+  res->var_tp = parse_type();
+
+  if (lpeek()->kind == T_EQUAL) {
+    /* has init expr */
+    ladvance();
+    res->init_expr = parse_expression();
+  }
+
+  if (lpeek()->kind != T_SEMI)
+    parse_error("semicolon expected");
+  ladvance();
+
+  return (ASTNode*)res;
+}
+
+ASTNode *parse_statement();
+void parse_body(ASTNode **ll);
+
+/* current lex token must be KW_WHILE */
+ASTNode *parse_while() {
+  ASTNode_While *res;
+  ASTNode *cond_expr;
+
+  ladvance();
+
+  if (lpeek()->kind != T_OPENING_PAR)
+    parse_error("expected '(' (for 'while' condition)");
+  ladvance();
+
+  cond_expr = parse_expression();
+
+  if (lpeek()->kind != T_CLOSING_PAR)
+    parse_error("expected ')' (for 'while' condition)");
+  ladvance();
+
+  if (lpeek()->kind != T_OPENING_CUR)
+    parse_error("'while' loop body expected ('{')");
+
+  res = mk_ast_node(AST_WHILE);
+  res->cond_expr = cond_expr;
+  parse_body(&res->body_ll);
+
+  return (ASTNode*)res;
+}
+
+ASTNode *parse_statement() {
+  switch (lpeek()->kind) {
+  case KW_LET:
+    return parse_let();
+  case KW_WHILE:
+    return parse_while();
+  case KW_RETURN:
+    break;
+  case KW_IF:
+    break;
+  default:
+    parse_error("unexpected token, expected statement or expression");
+  }
+}
+
+/* current lex token must be '{' */
+void parse_body(ASTNode **ll) {
+  ladvance();
+  while (1) {
+    if (lpeek()->kind == T_CLOSING_CUR) {
+      ladvance();
+      return;
+    }
+
+    ast_ll_insert(ll, parse_statement());
+  }
+}
+
+/* current lex token must be function name */
+ASTNode *parse_func(int state) {
+  Token *fname_tk;
+  char *fname;
+  ASTNode_FuncArg *args_ll = NULL;
+  char expect_arg = 0;
+  ASTNode_Type *ret_tp;
+
+  fname_tk = ladvance();
+  if (fname_tk->kind != T_ID)
+    parse_error_at_tk("function name expected", fname_tk);
+  fname = my_strdup(fname_tk->s);
+
+  if (lpeek()->kind != T_OPENING_PAR)
+    parse_error("opening parenthesis expected (for argument list)");
+  ladvance();
+
+  /* argument list */
+  while (1) {
+    switch (lpeek()->kind) {
+    case T_COMMA:
+      if (!args_ll || expect_arg)
+        parse_error("expected an argument, but got a comma");
+      expect_arg = 1;
+      ladvance();
+      break;
+    case T_ID:
+      if (args_ll && !expect_arg)
+        parse_error("expected a comma or closing parenthesis");
+      ast_ll_insert((ASTNode**)&args_ll, mk_ast_node(AST_FUNC_ARG));
+      args_ll->name = my_strdup(ladvance()->s);
+      if (lpeek()->kind != T_COLON)
+        parse_error("expected a colon in argument declaration");
+      ladvance();
+      args_ll->var_tp = parse_type();
+      expect_arg = 0;
+      break;
+    case T_CLOSING_PAR:
+      if (expect_arg)
+        parse_error("expected one more argument, but argument list closed");
+      ladvance();
+      goto end_args_parse_loop;
+    default:
+      parse_error("unexpected token in function argument list");
+    }
+  } end_args_parse_loop:
+
+  /* return type */
+  if (lpeek()->kind == T_ARROW) {
+    ladvance();
+    ret_tp = parse_type();
+  }
+  else {
+    ret_tp = mk_void_tp();
+  }
+
+  /* now we check if this is a declaration or a definition */
+
+  if (lpeek()->kind == T_SEMI) {
+    ladvance();
+    ASTNode_FuncDecl *decl = mk_ast_node(AST_FUNC_DECL);
+    decl->is_dllimport = state & HAS_DLLIMPORT;
+    decl->name = fname;
+    decl->args_ll = args_ll;
+    decl->ret_tp = ret_tp;
+    return (ASTNode*)decl;
+  }
+
+  /* must be definition */
+  if (lpeek()->kind != T_OPENING_CUR)
+    parse_error("expected function body or a semicolon");
+
+  if (state&HAS_DLLIMPORT)
+    parse_error("dllimport functions can't have a body");
+
+  ASTNode_FuncDef *def = mk_ast_node(AST_FUNC_DEF);
+  def->name = fname;
+  def->args_ll = args_ll;
+  def->ret_tp = ret_tp;
+  parse_body(&def->body_ll);
+  return (ASTNode*)def;
+}
+
+void print_ast_tree(ASTNode *tree, int depth) {
+  print("");
+}
+
+/* parser entry point */
+void parse() {
+  int modifiers = 0;
+  ASTNode_Module *module;
+
+  module = mk_ast_node(AST_MODULE);
+  ast_root = (ASTNode*)module;
+
+  while (1) {
+    switch (lpeek()->kind) {
+    case KW_DLLIMPORT:
+      if (modifiers&HAS_DLLIMPORT)
+        parse_error("multiple 'dllimport' modifiers");
+      ladvance();
+      modifiers |= HAS_DLLIMPORT;
+      break;
+
+    case KW_FUNCTION:
+      ladvance();
+      ast_ll_insert(&module->decls_ll, parse_func(modifiers));
+      modifiers = 0;
+      break;
+
+    case T_ERR:
+      return;
+    case T_EOF:
+      goto end_parse_loop;
+
+    default:
+      parse_error("unexpected token");
+    }
+  } end_parse_loop:
+
+  return;
 }
 
 int main(int argc, char **argv) {
@@ -575,12 +1379,7 @@ int main(int argc, char **argv) {
   input = NULL;
 
   src = source_begin;
-  while (1) {
-    tk = lex();
-    if (tk == NULL)
-      break;
-    print_tok(tk);
-  }
+  parse();
 
 cleanup:
   my_free(source_begin);
