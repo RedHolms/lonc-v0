@@ -189,6 +189,7 @@ typedef struct _S_ASTNode_If {
   AST_NODE_SHARED_FIELDS;
   ASTNode *cond_expr;
   ASTNode *body_ll;
+  ASTNode *else_body_ll; /* can be NULL */
 } ASTNode_If;
 
 typedef struct _S_ASTNode_Return {
@@ -221,16 +222,38 @@ enum _E_UnaryOp {
   UOP_DEC
 };
 
+enum _E_BinaryOp {
+  BOP_EQ,
+  BOP_NEQ,
+  BOP_LT,
+  BOP_GT,
+  BOP_LE,
+  BOP_GE,
+  BOP_ADD,
+  BOP_SUB,
+  BOP_MUL,
+  BOP_ASSIGN,
+  BOP_ARROW
+};
+
+enum _E_OpPrecedence {
+  PREC_NONE = 0,
+  PREC_ASSIGN,
+  PREC_EQUALITY,
+  PREC_RELATIONAL,
+  PREC_ADDITIVE,
+  PREC_MULTIPLICATIVE,
+  PREC_UNARY,
+  PREC_CALL,
+  PREC_PRIMARY
+};
+
 typedef struct _S_ASTNode_UnaryOp {
   AST_NODE_SHARED_FIELDS;
   char is_pre;
   int op;
   ASTNode *expr;
 } ASTNode_UnaryOp;
-
-enum _E_BinaryOp {
-  BOP_NEQ
-};
 
 typedef struct _S_ASTNode_BinaryOp {
   AST_NODE_SHARED_FIELDS;
@@ -308,6 +331,10 @@ char *my_strdup(const char *s) {
 /* console output functions */
 
 void print(const char *msg) {
+  if (!msg) {
+    print("<null>");
+    return;
+  }
   HANDLE con;
   DWORD written;
 
@@ -316,6 +343,11 @@ void print(const char *msg) {
 }
 
 void print_int(int val) {
+  if (val == 0) {
+    print("0");
+    return;
+  }
+
   /* TODO: handle signed numbers */
   char buf[64];
   char *bp = buf + sizeof(buf) - 1;
@@ -749,244 +781,6 @@ inline Token *ladvance() {
   return lex();
 }
 
-// ASTNode *mkastnode(ASTKind kind) {
-//   ASTNode *n = my_malloc(sizeof(ASTNode));
-//   n->kind = kind;
-//   return n;
-// }
-//
-// // Translates language high-level types directly into LLVM textual structures
-// char* parse_type() {
-//   char base[128] = {0};
-//   if (cur_tok->kind == T_TP___CXX_WCHAR_T) my_strcpy(base, "i16");
-//   else if (cur_tok->kind == T_TP___ASCII_CHAR) my_strcpy(base, "i8");
-//   else if (cur_tok->kind == T_TP_INT || cur_tok->kind == T_TP_UINT) my_strcpy(base, "i32");
-//   else if (cur_tok->kind == T_TP_ULONG) my_strcpy(base, "i64");
-//   else if (cur_tok->kind == T_TP_POINTER) my_strcpy(base, "i8*");
-//   else my_strcpy(base, "void");
-//   advance();
-//
-//   while (cur_tok && (cur_tok->kind == T_MUTABLE || cur_tok->kind == T_CONST || cur_tok->kind == '*')) {
-//     if (cur_tok->kind == '*') {
-//       size_t len = my_strlen(base);
-//       base[len] = '*'; base[len+1] = 0;
-//     }
-//     advance();
-//   }
-//   char *res = my_malloc(my_strlen(base) + 1);
-//   my_strcpy(res, base);
-//   return res;
-// }
-//
-// // ============================================================================
-// // 5. PARSER ARCHITECTURE (Recursive Descent)
-// // ============================================================================
-//
-// ASTNode* parse_expr();
-//
-// ASTNode* parse_primary() {
-//   if (cur_tok->kind == T_INT) {
-//     ASTNode *n = mkastnode(AST_INT);
-//     n->int_val = cur_tok->n;
-//     n->type_str = "i32";
-//     advance();
-//     return n;
-//   }
-//   if (cur_tok->kind == T_NULLPTR) {
-//     ASTNode *n = mkastnode(AST_INT);
-//     n->int_val = 0;
-//     n->type_str = "i8*";
-//     advance();
-//     return n;
-//   }
-//   if (cur_tok->kind == T_STR) {
-//     ASTNode *n = mkastnode(AST_STR);
-//     n->name = cur_tok->s;
-//     n->type_str = "i8*";
-//     advance();
-//     return n;
-//   }
-//   if (cur_tok->kind == T_ID) {
-//     char *id_name = cur_tok->s;
-//     advance();
-//     if (cur_tok->kind == '(') { // Call expression
-//       advance();
-//       ASTNode *n = mkastnode(AST_CALL);
-//       n->name = id_name;
-//       ASTNode *tail = NULL;
-//       if (cur_tok->kind != ')') {
-//         while (1) {
-//           ASTNode *arg = parse_expr();
-//           if (!n->args) n->args = arg;
-//           else tail->next = arg;
-//           tail = arg;
-//           if (cur_tok->kind == ')') break;
-//           if (cur_tok->kind == ',') advance();
-//         }
-//       }
-//       advance(); // consume ')'
-//       return n;
-//     }
-//     ASTNode *n = mkastnode(AST_ID);
-//     n->name = id_name;
-//     return n;
-//   }
-//   if (cur_tok->kind == '(') {
-//     advance();
-//     ASTNode *n = parse_expr();
-//     advance(); // consume ')'
-//     return n;
-//   }
-//   return NULL;
-// }
-//
-// ASTNode* parse_unary() {
-//   if (cur_tok->kind == '*' || cur_tok->kind == '&' || cur_tok->kind == T_INC || cur_tok->kind == T_DEC) {
-//     ASTNode *n = mkastnode(AST_UNARY);
-//     n->int_val = cur_tok->kind; // Save operator token ID
-//     advance();
-//     n->lhs = parse_unary();
-//     return n;
-//   }
-//   return parse_primary();
-// }
-//
-// ASTNode* parse_expr() {
-//   ASTNode *lhs = parse_unary();
-//   if (!lhs) return NULL;
-//
-//   if (cur_tok->kind == '=' || cur_tok->kind == '+' || cur_tok->kind == '-' ||
-//       cur_tok->kind == T_NE || cur_tok->kind == T_EQ || cur_tok->kind == '<' || cur_tok->kind == '>') {
-//     ASTNode *n = mkastnode(cur_tok->kind == '=' ? AST_ASSIGN : AST_BINARY);
-//     n->int_val = cur_tok->kind;
-//     advance();
-//     n->lhs = lhs;
-//     n->rhs = parse_expr();
-//     return n;
-//   }
-//   return lhs;
-// }
-//
-// ASTNode* parse_stmt() {
-//   if (cur_tok->kind == T_LET) {
-//     advance();
-//     ASTNode *n = mkastnode(AST_VAR_DECL);
-//     n->name = cur_tok->s;
-//     advance();
-//     if (cur_tok->kind == ':') { advance(); n->type_str = parse_type(); }
-//     if (cur_tok->kind == '=') { advance(); n->lhs = parse_expr(); }
-//     advance(); // consume ';'
-//     return n;
-//   }
-//   if (cur_tok->kind == T_RETURN) {
-//     advance();
-//     ASTNode *n = mkastnode(AST_RETURN);
-//     if (cur_tok->kind != ';') n->lhs = parse_expr();
-//     advance(); // consume ';'
-//     return n;
-//   }
-//   if (cur_tok->kind == T_WHILE) {
-//     advance(); advance(); // consume while and '('
-//     ASTNode *n = mkastnode(AST_WHILE);
-//     n->lhs = parse_expr();
-//     advance(); // consume ')'
-//     if (cur_tok->kind == '{') {
-//       advance();
-//       ASTNode *body = mkastnode(AST_BLOCK);
-//       ASTNode *tail = NULL;
-//       while (cur_tok && cur_tok->kind != '}') {
-//         ASTNode *s = parse_stmt();
-//         if (!body->children) body->children = s;
-//         else tail->next = s;
-//         tail = s;
-//       }
-//       advance(); // consume '}'
-//       n->rhs = body;
-//     }
-//     return n;
-//   }
-//   if (cur_tok->kind == T_IF) {
-//     advance(); advance(); // consume if and '('
-//     ASTNode *n = mkastnode(AST_IF);
-//     n->lhs = parse_expr();
-//     advance(); // consume ')'
-//     if (cur_tok->kind == '{') {
-//       advance();
-//       ASTNode *body = mkastnode(AST_BLOCK);
-//       ASTNode *tail = NULL;
-//       while (cur_tok && cur_tok->kind != '}') {
-//         ASTNode *s = parse_stmt();
-//         if (!body->children) body->children = s;
-//         else tail->next = s;
-//         tail = s;
-//       }
-//       advance(); // consume '}'
-//       n->rhs = body;
-//     }
-//     return n;
-//   }
-//   // Standard standalone expression statement fallback
-//   ASTNode *e = parse_expr();
-//   if (cur_tok->kind == ';') advance();
-//   return e;
-// }
-//
-// ASTNode* parse_program() {
-//   ASTNode *root = mkastnode(AST_PROGRAM);
-//   ASTNode *tail = NULL;
-//
-//   while (cur_tok) {
-//     int is_dll = 0;
-//     if (cur_tok->kind == T_DLLIMPORT) { is_dll = 1; advance(); }
-//     if (cur_tok->kind == T_FUNCTION) {
-//       advance();
-//       ASTNode *fn = mkastnode(AST_FUNCTION);
-//       fn->is_dllimport = is_dll;
-//       fn->name = cur_tok->s;
-//       advance(); advance(); // consume name and '('
-//
-//       // Map parameters cleanly
-//       ASTNode *arg_tail = NULL;
-//       while (cur_tok && cur_tok->kind != ')') {
-//         ASTNode *p = mkastnode(AST_VAR_DECL);
-//         p->name = cur_tok->s;
-//         advance(); advance(); // consume identifier and ':'
-//         p->type_str = parse_type();
-//         if (!fn->args) fn->args = p;
-//         else arg_tail->next = p;
-//         arg_tail = p;
-//         if (cur_tok->kind == ',') advance();
-//       }
-//       advance(); // consume ')'
-//
-//       if (cur_tok->kind == T_ARROW) { advance(); fn->type_str = parse_type(); }
-//       else { fn->type_str = "void"; }
-//
-//       if (cur_tok->kind == ';') { // Prototype declaration only
-//         advance();
-//       } else if (cur_tok->kind == '{') { // Full Function Body definition
-//         advance();
-//         ASTNode *body = mkastnode(AST_BLOCK);
-//         ASTNode *stmt_tail = NULL;
-//         while (cur_tok && cur_tok->kind != '}') {
-//           ASTNode *s = parse_stmt();
-//           if (!body->children) body->children = s;
-//           else stmt_tail->next = s;
-//           stmt_tail = s;
-//         }
-//         advance(); // consume '}'
-//         fn->rhs = body;
-//       }
-//       if (!root->children) root->children = fn;
-//       else tail->next = fn;
-//       tail = fn;
-//     } else {
-//       advance();
-//     }
-//   }
-//   return root;
-// }
-
 inline void *mk_ast_node(int tp) {
   ASTNode *node;
   size_t size;
@@ -1116,14 +910,188 @@ ASTNode_Type *parse_type() {
   }
 }
 
-ASTNode *parse_expression() {
-  if (lpeek()->kind == T_INT) {
-    ASTNode_IntLit *res = mk_ast_node(AST_INT_LIT);
-    res->n = ladvance()->n;
-    return (ASTNode*)res;
+inline int get_precedence(TokenKind kind) {
+  switch (kind) {
+  case T_EQUAL: return PREC_ASSIGN;
+  case T_EQ: case T_NE: return PREC_EQUALITY;
+  case T_LT: case T_GT: case T_LE: case T_GE: return PREC_RELATIONAL;
+  case T_PLUS: case T_MINUS: return PREC_ADDITIVE;
+  case T_STAR: return PREC_MULTIPLICATIVE;
+  case T_OPENING_PAR: case T_ARROW: return PREC_CALL;
+  default: return PREC_NONE;
+  }
+}
+
+ASTNode *parse_expression_with_precedence(int precedence);
+ASTNode *parse_expression();
+
+ASTNode *parse_prefix() {
+  int uop;
+
+  switch (lpeek()->kind) {
+  case T_INT: {
+    ASTNode_IntLit *node = mk_ast_node(AST_INT_LIT);
+    node->n = lpeek()->n;
+    ladvance();
+    return (ASTNode *)node;
+  }
+  case T_STR: {
+    ASTNode_StrLit *node = mk_ast_node(AST_STR_LIT);
+    node->s = my_strdup(lpeek()->s);
+    ladvance();
+    return (ASTNode *)node;
+  }
+  case T_ID: {
+    ASTNode_Var *node = mk_ast_node(AST_VAR);
+    node->name = my_strdup(lpeek()->s);
+    ladvance();
+    return (ASTNode *)node;
   }
 
-  /* PRATT PARSING HERE */
+  case T_STAR:
+    uop = UOP_DEREF;
+    goto parse_unary_op;
+  case T_AMP:
+    uop = UOP_ADDROF;
+    goto parse_unary_op;
+  case T_PLUS:
+    uop = UOP_PLUS;
+    goto parse_unary_op;
+  case T_MINUS:
+    uop = UOP_MINUS;
+    goto parse_unary_op;
+  case T_EXC:
+    uop = UOP_NOT;
+    goto parse_unary_op;
+  case T_INC:
+    uop = UOP_INC;
+    goto parse_unary_op;
+  case T_DEC:
+    uop = UOP_DEC;
+
+  parse_unary_op: {
+    ladvance();
+    ASTNode_UnaryOp *node = mk_ast_node(AST_UNARY_OP);
+    node->is_pre = 1;
+    node->op = uop;
+    node->expr = parse_expression_with_precedence(PREC_UNARY);
+    return (ASTNode *)node;
+  }
+
+  case T_OPENING_PAR: {
+    ladvance();
+    ASTNode *expr = parse_expression();
+    if (lpeek()->kind != T_CLOSING_PAR)
+      parse_error("closing parenthesis expected");
+    ladvance();
+    return expr;
+  }
+
+  default:
+    parse_error("unexpected token");
+  }
+}
+
+/* current token must be opening parenthesis */
+ASTNode *parse_call(const char *func_name) {
+  ladvance();
+
+  ASTNode_Call *call = mk_ast_node(AST_CALL);
+  call->name = my_strdup(func_name);
+
+  if (lpeek()->kind != T_CLOSING_PAR) {
+    while (1) {
+      ASTNode *arg = parse_expression_with_precedence(PREC_NONE);
+      ast_ll_insert(&call->args_ll, arg);
+
+      if (lpeek()->kind == T_CLOSING_PAR)
+        break;
+
+      if (lpeek()->kind != T_COMMA)
+        parse_error("expected a comma");
+
+      ladvance();
+    }
+  }
+
+  ladvance();
+  return (ASTNode *)call;
+}
+
+/* Second stage of expression parsing. Will try to parse a function call or some
+ * binary operation. If expression cannot be further parsed, returns NULL. */
+ASTNode *parse_infix(ASTNode *lhs, int precedence) {
+  int op, prec;
+
+  if (lpeek()->kind == T_OPENING_PAR) {
+    if (lhs->tp != AST_VAR)
+      parse_error("invalid call expression: lhs must be an ID");
+
+    return parse_call(((ASTNode_Var*)lhs)->name);
+  }
+
+  switch (lpeek()->kind) {
+  case T_INC:
+    op = UOP_INC;
+    goto parse_unary_op;
+  case T_DEC:
+    op = UOP_DEC;
+  parse_unary_op: {
+    ASTNode_UnaryOp *node = mk_ast_node(AST_UNARY_OP);
+    node->is_pre = 0;
+    node->expr = lhs;
+    node->op = op;
+    return (ASTNode*)node;
+  }
+
+  case T_NE: op = BOP_NEQ; prec = PREC_EQUALITY; goto parse_binary_op;
+  case T_EQ: op = BOP_EQ; prec = PREC_EQUALITY; goto parse_binary_op;
+  case T_LT: op = BOP_LT; prec = PREC_RELATIONAL; goto parse_binary_op;
+  case T_GT: op = BOP_GT; prec = PREC_RELATIONAL; goto parse_binary_op;
+  case T_LE: op = BOP_LE; prec = PREC_RELATIONAL; goto parse_binary_op;
+  case T_GE: op = BOP_GE; prec = PREC_RELATIONAL; goto parse_binary_op;
+  case T_PLUS: op = BOP_ADD; prec = PREC_ADDITIVE; goto parse_binary_op;
+  case T_MINUS: op = BOP_SUB; prec = PREC_ADDITIVE; goto parse_binary_op;
+  case T_STAR: op = BOP_MUL; prec = PREC_MULTIPLICATIVE; goto parse_binary_op;
+  case T_EQUAL: op = BOP_ASSIGN; prec = PREC_ASSIGN; goto parse_binary_op;
+  case T_ARROW: op = BOP_ARROW; prec = PREC_CALL;
+  parse_binary_op: {
+    if (precedence >= prec)
+      return NULL;
+
+    ladvance();
+    ASTNode_BinaryOp *node = mk_ast_node(AST_BINARY_OP);
+    node->lhs = lhs;
+    node->op = op;
+    node->rhs = parse_expression_with_precedence(prec);
+    return (ASTNode*)node;
+  }
+
+  default:
+    return NULL;
+  }
+}
+
+ASTNode *parse_expression_with_precedence(int precedence) {
+  if (lpeek()->kind == KW_NULLPTR) {
+    ladvance();
+    return mk_ast_node(AST_NULLPTR);
+  }
+
+  ASTNode *res = parse_prefix();
+
+  while (1) {
+    ASTNode *comp = parse_infix(res, precedence);
+
+    if (comp == NULL)
+      return res;
+
+    res = comp;
+  }
+}
+
+ASTNode *parse_expression() {
+  return parse_expression_with_precedence(PREC_NONE);
 }
 
 /* current lex token must be KW_LET */
@@ -1187,6 +1155,59 @@ ASTNode *parse_while() {
   return (ASTNode*)res;
 }
 
+ASTNode *parse_return() {
+  ASTNode_Return *res;
+
+  ladvance();
+
+  res = mk_ast_node(AST_RETURN);
+  res->retval_expr = parse_expression();
+
+  if (lpeek()->kind != T_SEMI)
+    parse_error("semicolon expected");
+  ladvance();
+
+  return (ASTNode*)res;
+}
+
+ASTNode *parse_statement();
+
+ASTNode *parse_if() {
+  ASTNode_If *res;
+
+  ladvance();
+
+  if (lpeek()->kind != T_OPENING_PAR)
+    parse_error("expected '(' (for 'if' condition)");
+  ladvance();
+
+  res = mk_ast_node(AST_IF);
+  res->cond_expr = parse_expression();
+
+  if (lpeek()->kind != T_CLOSING_PAR)
+    parse_error("expected ')' (for 'if' condition)");
+  ladvance();
+
+  if (lpeek()->kind == T_OPENING_CUR) {
+    parse_body(&res->body_ll);
+  }
+  else {
+    res->body_ll = parse_statement();
+  }
+
+  if (lpeek()->kind == KW_ELSE) {
+    ladvance();
+    if (lpeek()->kind == T_OPENING_CUR) {
+      parse_body(&res->else_body_ll);
+    }
+    else {
+      res->else_body_ll = parse_statement();
+    }
+  }
+
+  return (ASTNode*)res;
+}
+
 ASTNode *parse_statement() {
   switch (lpeek()->kind) {
   case KW_LET:
@@ -1194,11 +1215,16 @@ ASTNode *parse_statement() {
   case KW_WHILE:
     return parse_while();
   case KW_RETURN:
-    break;
+    return parse_return();
   case KW_IF:
-    break;
-  default:
-    parse_error("unexpected token, expected statement or expression");
+    return parse_if();
+  default: {
+    ASTNode *expr = parse_expression();
+    if (lpeek()->kind != T_SEMI)
+      parse_error("semicolon expected");
+    ladvance();
+    return expr;
+  }
   }
 }
 
@@ -1219,7 +1245,7 @@ void parse_body(ASTNode **ll) {
 ASTNode *parse_func(int state) {
   Token *fname_tk;
   char *fname;
-  ASTNode_FuncArg *args_ll = NULL;
+  ASTNode_FuncArg *args_ll = NULL, *arg;
   char expect_arg = 0;
   ASTNode_Type *ret_tp;
 
@@ -1244,12 +1270,13 @@ ASTNode *parse_func(int state) {
     case T_ID:
       if (args_ll && !expect_arg)
         parse_error("expected a comma or closing parenthesis");
-      ast_ll_insert((ASTNode**)&args_ll, mk_ast_node(AST_FUNC_ARG));
-      args_ll->name = my_strdup(ladvance()->s);
+      ast_ll_insert((ASTNode**)&args_ll, (ASTNode*)(arg
+        = mk_ast_node(AST_FUNC_ARG)));
+      arg->name = my_strdup(ladvance()->s);
       if (lpeek()->kind != T_COLON)
         parse_error("expected a colon in argument declaration");
       ladvance();
-      args_ll->var_tp = parse_type();
+      arg->var_tp = parse_type();
       expect_arg = 0;
       break;
     case T_CLOSING_PAR:
@@ -1299,7 +1326,232 @@ ASTNode *parse_func(int state) {
 }
 
 void print_ast_tree(ASTNode *tree, int depth) {
-  print("");
+  for (int i = 0; i < depth*4; ++i)
+    print(" ");
+  if (!tree) {
+    print("<NULL NODE>");
+    return;
+  }
+
+  switch (tree->tp) {
+  case AST_TYPE: {
+    ASTNode_Type *node = (ASTNode_Type*)tree;
+    print("AST_TYPE");
+    switch (node->tp_kind) {
+    case TK_BUILTIN:
+      print(" builtin ");
+      switch (node->builtin.tp) {
+        case BIT_VOID: print("BIT_VOID"); break;
+        case BIT___CXX_WCHAR_T: print("BIT___CXX_WCHAR_T"); break;
+        case BIT___ASCII_CHAR: print("BIT___ASCII_CHAR"); break;
+        case BIT_INT: print("BIT_INT"); break;
+        case BIT_UINT: print("BIT_UINT"); break;
+        case BIT_ULONG: print("BIT_ULONG"); break;
+        case BIT_POINTER: print("BIT_POINTER"); break;
+      }
+      break;
+    case TK_POINTER:
+      if (node->ptr.is_const)
+        print(" const ");
+      else
+        print(" mutable ");
+      print(" pointer\n");
+      print_ast_tree((ASTNode*)node->ptr.underlying, depth+1);
+      print("\n");
+      break;
+    }
+    break;
+  }
+  case AST_FUNC_ARG: {
+    ASTNode_FuncArg *node = (ASTNode_FuncArg*)tree;
+    print("AST_FUNC_ARG ");
+    print(node->name);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("type:\n");
+    print_ast_tree((ASTNode*)node->var_tp, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_MODULE: {
+    ASTNode_Module *node = (ASTNode_Module*)tree;
+    print("AST_MODULE ");
+    print(node->file);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("decls:\n");
+    print_ast_tree(node->decls_ll, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_FUNC_DECL: {
+    ASTNode_FuncDecl *node = (ASTNode_FuncDecl*)tree;
+    print("AST_FUNC_DECL ");
+    if (node->is_dllimport)
+      print("dllimport ");
+    print(node->name);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("ret_tp:\n");
+    print_ast_tree((ASTNode*)node->ret_tp, depth+1);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    if (node->args_ll) {
+      print("args:\n");
+      print_ast_tree((ASTNode*)node->args_ll, depth+1);
+      print("\n");
+    }
+    break;
+  }
+  case AST_FUNC_DEF: {
+    ASTNode_FuncDef *node = (ASTNode_FuncDef*)tree;
+    print("AST_FUNC_DEF ");
+    print(node->name);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("ret_tp:\n");
+    print_ast_tree((ASTNode*)node->ret_tp, depth+1);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("args:\n");
+    print_ast_tree((ASTNode*)node->args_ll, depth+1);
+    print("\n");
+    for (int i = 0; i < depth; ++i)
+      print(" ");
+    print("body:\n");
+    print_ast_tree(node->body_ll, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_VAR_DECL: {
+    ASTNode_VarDecl *node = (ASTNode_VarDecl*)tree;
+    print("AST_VAR_DECL ");
+    print(node->name);
+    print("\n");
+    if (node->var_tp) {
+      print_ast_tree((ASTNode*)node->var_tp, depth+1);
+      print("\n");
+    }
+    if (node->init_expr) {
+      print_ast_tree(node->init_expr, depth+1);
+      print("\n");
+    }
+    break;
+  }
+  case AST_WHILE: {
+    ASTNode_While *node = (ASTNode_While*)tree;
+    print("AST_WHILE\n");
+    print_ast_tree(node->cond_expr, depth+1);
+    print("\n");
+    print_ast_tree(node->body_ll, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_IF: {
+    ASTNode_If *node = (ASTNode_If*)tree;
+    print("AST_IF\n");
+    print_ast_tree(node->cond_expr, depth+1);
+    print("\n");
+    print_ast_tree(node->body_ll, depth+1);
+    print("\n");
+    if (node->else_body_ll) {
+      print_ast_tree(node->else_body_ll, depth+1);
+      print("\n");
+    }
+    break;
+  }
+  case AST_RETURN: {
+    ASTNode_Return *node = (ASTNode_Return*)tree;
+    print("AST_RETURN\n");
+    print_ast_tree(node->retval_expr, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_VAR: {
+    ASTNode_Var *node = (ASTNode_Var*)tree;
+    print("AST_VAR ");
+    print(node->name);
+    print("\n");
+    break;
+  }
+  case AST_INT_LIT: {
+    ASTNode_IntLit *node = (ASTNode_IntLit*)tree;
+    print("AST_INT_LIT ");
+    print_int(node->n);
+    break;
+  }
+  case AST_STR_LIT: {
+    ASTNode_StrLit *node = (ASTNode_StrLit*)tree;
+    print("AST_STR_LIT");
+    break;
+  }
+  case AST_UNARY_OP: {
+    ASTNode_UnaryOp *node = (ASTNode_UnaryOp*)tree;
+    print("AST_UNARY_OP ");
+    if (node->is_pre)
+      print("pre ");
+    else
+      print("post ");
+    switch (node->op) {
+    case UOP_DEREF: print("UOP_DEREF "); break;
+    case UOP_ADDROF: print("UOP_ADDROF "); break;
+    case UOP_PLUS: print("UOP_PLUS "); break;
+    case UOP_MINUS: print("UOP_MINUS "); break;
+    case UOP_NOT: print("UOP_NOT "); break;
+    case UOP_INC: print("UOP_INC "); break;
+    case UOP_DEC: print("UOP_DEC "); break;
+    }
+    print("\n");
+    print_ast_tree(node->expr, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_BINARY_OP: {
+    ASTNode_BinaryOp *node = (ASTNode_BinaryOp*)tree;
+    print("AST_BINARY_OP ");
+    switch (node->op) {
+    case BOP_EQ: print("BOP_EQ "); break;
+    case BOP_NEQ: print("BOP_NEQ "); break;
+    case BOP_LT: print("BOP_LT "); break;
+    case BOP_GT: print("BOP_GT "); break;
+    case BOP_LE: print("BOP_LE "); break;
+    case BOP_GE: print("BOP_GE "); break;
+    case BOP_ADD: print("BOP_ADD "); break;
+    case BOP_SUB: print("BOP_SUB "); break;
+    case BOP_MUL: print("BOP_MUL "); break;
+    case BOP_ASSIGN: print("BOP_ASSIGN "); break;
+    case BOP_ARROW: print("BOP_ARROW "); break;
+    }
+    print("\n");
+    print_ast_tree(node->lhs, depth+1);
+    print("\n");
+    print_ast_tree(node->rhs, depth+1);
+    print("\n");
+    break;
+  }
+  case AST_CALL: {
+    ASTNode_Call *node = (ASTNode_Call*)tree;
+    print("AST_CALL ");
+    print(node->name);
+    print("\n");
+    print_ast_tree(node->args_ll, depth+1);
+    break;
+  }
+  case AST_NULLPTR: {
+    ASTNode_Nullptr *node = (ASTNode_Nullptr*)tree;
+    print("AST_NULLPTR");
+    break;
+  }
+  }
+  print("\n");
+  if (tree->next)
+    print_ast_tree(tree->next, depth);
 }
 
 /* parser entry point */
@@ -1334,6 +1586,8 @@ void parse() {
       parse_error("unexpected token");
     }
   } end_parse_loop:
+
+  print_ast_tree((ASTNode*)module, 0);
 
   return;
 }

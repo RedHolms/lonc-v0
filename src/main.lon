@@ -9,7 +9,7 @@ dllimport function WriteConsoleA(hConsoleOutput: pointer, lpBuffer: __ascii_char
   nNumberOfCharsToWrite: uint, lpNumberOfCharsWritten: uint mutable*, lpReserved: pointer) -> uint;
 
 function strlen(str: __ascii_char const*) -> ulong {
-  let result: ulong = 0;
+  let result: ulong = 0 * 2 + 4 * 3 + 5 * (6 + 7);
 
   while (*str) {
     ++str;
@@ -26,7 +26,7 @@ function print_err(msg: __ascii_char const*) {
 
 function main() -> int {
   let argc: int;
-  let argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  let argv: __cxx_wchar_t mutable* mutable* = CommandLineToArgvW(GetCommandLineW(), &argc);
 
   if (argc != 3) {
     print_err("# failed to open the input file\n");
